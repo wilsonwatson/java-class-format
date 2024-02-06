@@ -3,7 +3,7 @@ use std::fmt::Debug;
 use binrw::{binread, BinRead, VecArgs};
 
 use crate::{
-    raw::{Attributes, ClassIndex, ConstantPoolItem, NameAndTypeIndex, Utf8Index},
+    raw::{Attributes, ClassIndex, ConstantPoolItem, MethodHandleIndex, NameAndTypeIndex, Utf8Index},
     ClassFile, Error,
 };
 
@@ -120,28 +120,26 @@ pub struct Code<'a> {
     attributes: Attributes,
 }
 
-impl<'a> Code<'a> {
-    pub fn stack_map_table(&self) -> crate::Result<Option<StackMapTable<'a>>> {
-        match self.attributes.0.get("StackMapTable") {
-            Some(x) => {
-                let mut buf = std::io::Cursor::new(&x[..]);
-                let value = StackMapTable::read_be_args(&mut buf, (self.class_file,))?;
-                Ok(Some(value))
+macro_rules! attribute {
+    ($strct:ident, $name:ident) => {
+        pub fn $name(&self) -> crate::Result<Option<$strct<'a>>> {
+            match self.attributes.0.get(stringify!($strct)) {
+                Some(x) => {
+                    let mut buf = std::io::Cursor::new(&x[..]);
+                    let value = $strct::read_be_args(&mut buf, (self.class_file,))?;
+                    Ok(Some(value))
+                }
+                None => Ok(None),
             }
-            None => Ok(None),
         }
-    }
+    };
+}
 
-    pub fn line_number_table(&self) -> crate::Result<Option<LineNumberTable<'a>>> {
-        match self.attributes.0.get("LineNumberTable") {
-            Some(x) => {
-                let mut buf = std::io::Cursor::new(&x[..]);
-                let value = LineNumberTable::read_be_args(&mut buf, (self.class_file,))?;
-                Ok(Some(value))
-            }
-            None => Ok(None),
-        }
-    }
+impl<'a> Code<'a> {
+    attribute!(StackMapTable, stack_map_table);
+    attribute!(LineNumberTable, line_number_table);
+    attribute!(LocalVariableTable, local_variable_table);
+    attribute!(LocalVariableTypeTable, local_variable_type_table);
 }
 
 impl<'a> Debug for Code<'a> {
@@ -404,8 +402,6 @@ pub struct EnclosingMethod<'a> {
     method_index: NameAndTypeIndex,
 }
 
-
-
 #[binread]
 #[br(import(cf: &'a ClassFile,))]
 pub struct Signature<'a> {
@@ -416,15 +412,24 @@ pub struct Signature<'a> {
 
 impl<'a> Signature<'a> {
     pub(crate) fn get_class(&self) -> crate::Result<crate::signature::ClassSignature<'a>> {
-        Ok(crate::signature::ClassSignature::parse(self.signature_index.get_as_string(self.class_file)?)?.1)
+        Ok(crate::signature::ClassSignature::parse(
+            self.signature_index.get_as_string(self.class_file)?,
+        )?
+        .1)
     }
 
     pub(crate) fn get_method(&self) -> crate::Result<crate::signature::MethodSignature<'a>> {
-        Ok(crate::signature::MethodSignature::parse(self.signature_index.get_as_string(self.class_file)?)?.1)
+        Ok(crate::signature::MethodSignature::parse(
+            self.signature_index.get_as_string(self.class_file)?,
+        )?
+        .1)
     }
 
     pub(crate) fn get_field(&self) -> crate::Result<crate::signature::ReferenceType<'a>> {
-        Ok(crate::signature::ReferenceType::parse(self.signature_index.get_as_string(self.class_file)?)?.1)
+        Ok(crate::signature::ReferenceType::parse(
+            self.signature_index.get_as_string(self.class_file)?,
+        )?
+        .1)
     }
 }
 
@@ -478,14 +483,99 @@ pub struct LocalVariableTable<'a> {
 
 impl<'a> LocalVariableTable<'a> {
     pub fn get_variables(&self) -> crate::Result<Vec<LocalVariable<'a>>> {
-        self.local_variable_table.iter().map(|(start_pc, length, name, descriptor, index)| Ok(LocalVariable {
-            start_pc: *start_pc,
-            length: *length,
-            name: name.get_as_string(self.class_file)?,
-            descriptor: crate::field::TypeDescriptor::parse(descriptor.get_as_string(self.class_file)?)?.1,
-            index: *index,
-        })).collect()
+        self.local_variable_table
+            .iter()
+            .map(|(start_pc, length, name, descriptor, index)| {
+                Ok(LocalVariable {
+                    start_pc: *start_pc,
+                    length: *length,
+                    name: name.get_as_string(self.class_file)?,
+                    descriptor: crate::field::TypeDescriptor::parse(
+                        descriptor.get_as_string(self.class_file)?,
+                    )?
+                    .1,
+                    index: *index,
+                })
+            })
+            .collect()
     }
 }
 
-// TODO 4.7.14. The LocalVariableTypeTable Attribute 
+pub struct LocalVariableType<'a> {
+    pub start_pc: u16,
+    pub length: u16,
+    pub name: &'a str,
+    pub signature: crate::signature::ReferenceType<'a>,
+    pub index: u16,
+}
+
+#[binread]
+#[br(import(cf: &'a ClassFile,))]
+pub struct LocalVariableTypeTable<'a> {
+    #[br(calc = cf)]
+    class_file: &'a ClassFile,
+    #[br(temp)]
+    local_variable_type_table_length: u16,
+    #[br(count = local_variable_type_table_length)]
+    local_variable_type_table: Vec<(u16, u16, Utf8Index, Utf8Index, u16)>,
+}
+
+impl<'a> LocalVariableTypeTable<'a> {
+    pub fn get_variable_types(&self) -> crate::Result<Vec<LocalVariableType<'a>>> {
+        self.local_variable_type_table
+            .iter()
+            .map(|(start_pc, length, name, signature, index)| {
+                Ok(LocalVariableType {
+                    start_pc: *start_pc,
+                    length: *length,
+                    name: name.get_as_string(self.class_file)?,
+                    signature: crate::signature::ReferenceType::parse(
+                        signature.get_as_string(self.class_file)?,
+                    )?
+                    .1,
+                    index: *index,
+                })
+            })
+            .collect()
+    }
+}
+
+// TODO Annotations
+
+#[binread]
+struct BootstrapMethodRaw {
+    bootstrap_method_ref: MethodHandleIndex,
+    #[br(temp)]
+    num_bootstrap_args: u16,
+    #[br(count = num_bootstrap_args)]
+    bootstrap_args: Vec<u16>,
+}
+
+#[binread]
+#[br(import(cf: &'a ClassFile,))]
+pub struct BootstrapMethods<'a> {
+    #[br(calc = cf)]
+    class_file: &'a ClassFile,
+    #[br(temp)]
+    bootstrap_methods_length: u16,
+    #[br(count = bootstrap_methods_length)]
+    bootstrap_methods: Vec<BootstrapMethodRaw>,
+}
+
+// TODO MethodParameters
+
+// TODO Module
+
+// TODO ModulePackage
+
+// TODO ModuleMainClass
+
+// TODO NestHost
+
+// TODO NestMembers
+
+// TODO Record
+
+// TODO PermittedSubclasses
+
+

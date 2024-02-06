@@ -113,7 +113,7 @@ pub enum ConstantPoolItem {
     },
     #[doc = "CONSTANT_MethodHandle as defined in §4.4.8"]
     #[br(magic = 15u8)]
-    MethodHandle(Reference),
+    MethodHandle { reference: Reference },
     #[doc = "CONSTANT_MethodType as defined in §4.4.9"]
     #[br(magic = 16u8)]
     MethodType { descriptor_index: Utf8Index },
@@ -168,6 +168,7 @@ macro_rules! index_ty {
 index_ty!(Utf8 { cpool, value } => { value.as_str() });
 index_ty!(Class { cpool, name_index } => { name_index.get_as_string_impl(cpool)? });
 index_ty!(NameAndType { cpool, name_index, descriptor_index } => { name_index.get_as_string_impl(cpool)? });
+index_ty!(MethodHandle { cpool, reference } => { "" });
 
 #[binread]
 #[derive(Debug)]
@@ -176,8 +177,8 @@ pub struct BootstrapMethodAttrInfo(u16);
 #[binread]
 #[derive(Debug)]
 pub struct Reference {
-    pub _kind: u8,
-    pub _index: u16,
+    pub kind: u8,
+    pub index: u16,
 }
 
 bitflags::bitflags! {

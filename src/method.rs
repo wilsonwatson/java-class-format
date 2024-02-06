@@ -53,6 +53,21 @@ pub struct Method<'a> {
     pub(crate) method_inner: &'a MethodRaw,
 }
 
+macro_rules! attribute {
+    ($strct:ident, $name:ident) => {
+        pub fn $name(&self) -> crate::Result<Option<$strct<'a>>> {
+            match self.method_inner.attributes.0.get(stringify!($strct)) {
+                Some(x) => {
+                    let mut buf = std::io::Cursor::new(&x[..]);
+                    let value = $strct::read_be_args(&mut buf, (self.class_file,))?;
+                    Ok(Some(value))
+                }
+                None => Ok(None),
+            }
+        }
+    };
+}
+
 impl<'a> Method<'a> {
     pub fn identifier(&self) -> crate::Result<&'a str> {
         self.method_inner.name_index.get_as_string(self.class_file)
@@ -84,27 +99,8 @@ impl<'a> Method<'a> {
             .contains(MethodAccessFlags::NATIVE)
     }
 
-    pub fn code(&self) -> crate::Result<Option<Code<'a>>> {
-        match self.method_inner.attributes.0.get("Code") {
-            Some(x) => {
-                let mut buf = std::io::Cursor::new(&x[..]);
-                let value = Code::read_be_args(&mut buf, (self.class_file,))?;
-                Ok(Some(value))
-            }
-            None => Ok(None),
-        }
-    }
-
-    pub fn exceptions(&self) -> crate::Result<Option<Exceptions<'a>>> {
-        match self.method_inner.attributes.0.get("Exceptions") {
-            Some(x) => {
-                let mut buf = std::io::Cursor::new(&x[..]);
-                let value = Exceptions::read_be_args(&mut buf, (self.class_file,))?;
-                Ok(Some(value))
-            }
-            None => Ok(None),
-        }
-    }
+    attribute!(Code, code);
+    attribute!(Exceptions, exceptions);
 
     pub fn signature(&self) -> crate::Result<Option<MethodSignature<'a>>> {
         match self.method_inner.attributes.0.get("Signature") {
@@ -115,6 +111,10 @@ impl<'a> Method<'a> {
             }
             None => Ok(None),
         }
+    }
+
+    pub fn is_deprecated(&self) -> bool {
+        self.method_inner.attributes.0.get("Deprecated").is_some()
     }
 }
 

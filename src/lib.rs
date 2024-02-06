@@ -9,6 +9,7 @@ pub mod field;
 pub mod method;
 pub mod attributes;
 pub mod signature;
+pub mod instruction;
 
 pub use error::{Result, Error};
 use field::Field;
@@ -40,6 +41,21 @@ pub struct ClassFile {
     methods: Vec<MethodRaw>,
     #[br(args(&constant_pool,))]
     attributes: Attributes,
+}
+
+macro_rules! attribute {
+    ($strct:ident, $name:ident) => {
+        pub fn $name<'a>(&'a self) -> Result<Option<$strct<'a>>> {
+            match self.attributes.0.get(stringify!($strct)) {
+                Some(x) => {
+                    let mut buf = std::io::Cursor::new(&x[..]);
+                    let value = $strct::read_be_args(&mut buf, (self,))?;
+                    Ok(Some(value))
+                }
+                None => Ok(None),
+            }
+        }
+    };
 }
 
 impl ClassFile {
@@ -85,27 +101,9 @@ impl ClassFile {
             .collect()
     }
 
-    pub fn inner_classes<'a>(&'a self) -> Result<Option<InnerClasses<'a>>> {
-        match self.attributes.0.get("InnerClasses") {
-            Some(x) => {
-                let mut buf = std::io::Cursor::new(&x[..]);
-                let value = InnerClasses::read_be_args(&mut buf, (self,))?;
-                Ok(Some(value))
-            }
-            None => Ok(None),
-        }
-    }
-
-    pub fn enclosing_method<'a>(&'a self) -> Result<Option<EnclosingMethod<'a>>> {
-        match self.attributes.0.get("EnclosingMethod") {
-            Some(x) => {
-                let mut buf = std::io::Cursor::new(&x[..]);
-                let value = EnclosingMethod::read_be_args(&mut buf, (self,))?;
-                Ok(Some(value))
-            }
-            None => Ok(None),
-        }
-    }
+    attribute!(InnerClasses, inner_classes);
+    attribute!(EnclosingMethod, enclosing_method);
+    attribute!(SourceFile, source_file);
 
     pub fn signature<'a>(&'a self) -> crate::Result<Option<ClassSignature<'a>>> {
         match self.attributes.0.get("Signature") {
@@ -118,15 +116,8 @@ impl ClassFile {
         }
     }
 
-    pub fn source_file<'a>(&'a self) -> crate::Result<Option<SourceFile<'a>>> {
-        match self.attributes.0.get("SourceFile") {
-            Some(x) => {
-                let mut buf = std::io::Cursor::new(&x[..]);
-                let value = SourceFile::read_be_args(&mut buf, (self,))?;
-                Ok(Some(value))
-            }
-            None => Ok(None),
-        }
+    pub fn is_deprecated(&self) -> bool {
+        self.attributes.0.get("Deprecated").is_some()
     }
 }
 

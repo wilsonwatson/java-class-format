@@ -49,6 +49,21 @@ pub struct Field<'a> {
     pub(crate) field_inner: &'a FieldRaw,
 }
 
+macro_rules! attribute {
+    ($strct:ident, $name:ident) => {
+        pub fn $name(&self) -> crate::Result<Option<$strct<'a>>> {
+            match self.field_inner.attributes.0.get(stringify!($strct)) {
+                Some(x) => {
+                    let mut buf = std::io::Cursor::new(&x[..]);
+                    let value = $strct::read_be_args(&mut buf, (self.class_file,))?;
+                    Ok(Some(value))
+                }
+                None => Ok(None),
+            }
+        }
+    };
+}
+
 impl<'a> Field<'a> {
     pub fn identifier(&self) -> crate::Result<&'a str> {
         self.field_inner.name_index.get_as_string(self.class_file)
@@ -63,16 +78,7 @@ impl<'a> Field<'a> {
         Ok(ty)
     }
 
-    pub fn constant_value(&self) -> crate::Result<Option<ConstantValue<'a>>> {
-        match self.field_inner.attributes.0.get("ConstantValue") {
-            Some(x) => {
-                let mut buf = std::io::Cursor::new(&x[..]);
-                let value = ConstantValue::read_be_args(&mut buf, (self.class_file,))?;
-                Ok(Some(value))
-            }
-            None => Ok(None),
-        }
-    }
+    attribute!(ConstantValue, constant_value);
 
     pub fn signature(&self) -> crate::Result<Option<ReferenceType<'a>>> {
         match self.field_inner.attributes.0.get("Signature") {
@@ -83,6 +89,10 @@ impl<'a> Field<'a> {
             }
             None => Ok(None),
         }
+    }
+
+    pub fn is_deprecated(&self) -> bool {
+        self.field_inner.attributes.0.get("Deprecated").is_some()
     }
 }
 
