@@ -170,6 +170,26 @@ index_ty!(Class { cpool, name_index } => { name_index.get_as_string_impl(cpool)?
 index_ty!(NameAndType { cpool, name_index, descriptor_index } => { name_index.get_as_string_impl(cpool)? });
 index_ty!(MethodHandle { cpool, reference } => { "" });
 
+impl NameAndTypeIndex {
+    pub fn get_name<'a>(&self, class: &'a super::ClassFile) -> super::Result<&'a str> {
+        match &class.constant_pool.0[self.0 as usize - 1] {
+            ConstantPoolItem::NameAndType { name_index, .. } => {
+                name_index.get_as_string(class)
+            }
+            x => Err(super::Error::ConstantPoolError(format!("expected NameAndType, found {:?}", x)))
+        }
+    }
+
+    pub fn get_descriptor<'a>(&self, class: &'a super::ClassFile) -> super::Result<&'a str> {
+        match &class.constant_pool.0[self.0 as usize - 1] {
+            ConstantPoolItem::NameAndType { descriptor_index, .. } => {
+                descriptor_index.get_as_string(class)
+            }
+            x => Err(super::Error::ConstantPoolError(format!("expected NameAndType, found {:?}", x)))
+        }
+    }
+}
+
 #[binread]
 #[derive(Debug)]
 pub struct BootstrapMethodAttrInfo(u16);

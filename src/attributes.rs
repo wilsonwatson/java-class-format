@@ -3,8 +3,7 @@ use std::fmt::Debug;
 use binrw::{binread, BinRead, VecArgs};
 
 use crate::{
-    raw::{Attributes, ClassIndex, ConstantPoolItem, MethodHandleIndex, NameAndTypeIndex, Utf8Index},
-    ClassFile, Error,
+    instruction::Instruction, raw::{Attributes, ClassIndex, ConstantPoolItem, MethodHandleIndex, NameAndTypeIndex, Utf8Index}, ClassFile, Error
 };
 
 pub struct ConstantValue<'a> {
@@ -140,6 +139,23 @@ impl<'a> Code<'a> {
     attribute!(LineNumberTable, line_number_table);
     attribute!(LocalVariableTable, local_variable_table);
     attribute!(LocalVariableTypeTable, local_variable_type_table);
+
+    pub fn instructions(&self) -> super::Result<Vec<Instruction>> {
+        let mut cursor = std::io::Cursor::new(&self.code[..]);
+        let mut res = Vec::new();
+        loop {
+            let p = cursor.position();
+            if cursor.position() >= self.code.len() as u64 {
+                break
+            }
+            let next = match Instruction::read_be_args(&mut cursor, (self.class_file,)) {
+                Ok(x) => x,
+                Err(e) => return Err(super::Error::from(e)),
+            };
+            res.push(next);
+        }
+        Ok(res)
+    }
 }
 
 impl<'a> Debug for Code<'a> {

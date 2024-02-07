@@ -1,7 +1,97 @@
-use binrw::binread;
+use binrw::{binread, BinRead};
+
+use crate::{field::{Field, TypeDescriptor}, raw::ConstantPoolItem, ClassFile, ClassIndex};
+
+#[derive(Debug)]
+pub struct FieldRef<'a> {
+    class: &'a str,
+    name: &'a str,
+    descriptor: TypeDescriptor<'a>,
+}
+
+impl<'a> BinRead for FieldRef<'a> {
+    type Args<'b> = (&'a ClassFile,);
+
+    fn read_options<R: std::io::prelude::Read + std::io::prelude::Seek>(
+        reader: &mut R,
+        endian: binrw::Endian,
+        (cf,): Self::Args<'_>,
+    ) -> binrw::prelude::BinResult<Self> {
+        let pos = reader.stream_position()?;
+        let index = u16::read_options(reader, endian, ())?;
+        match &cf.constant_pool.0[index as usize - 1] {
+            ConstantPoolItem::Fieldref {
+                class_index,
+                name_and_type_index,
+            } => {
+                let class = class_index
+                    .get_as_string(cf)
+                    .map_err(|x| binrw::Error::Custom {
+                        pos,
+                        err: Box::new(x),
+                    })?;
+                let name = name_and_type_index
+                    .get_name(cf)
+                    .map_err(|x| binrw::Error::Custom {
+                        pos,
+                        err: Box::new(x),
+                    })?;
+                let descriptor =
+                    name_and_type_index
+                        .get_descriptor(cf)
+                        .map_err(|x| binrw::Error::Custom {
+                            pos,
+                            err: Box::new(x),
+                        })?;
+                let descriptor = TypeDescriptor::parse(descriptor)
+                    .map_err(|x| binrw::Error::Custom {
+                        pos,
+                        err: Box::new(super::Error::from(x)),
+                    })?
+                    .1;
+                Ok(Self {
+                    class,
+                    name,
+                    descriptor,
+                })
+            }
+            x => Err(binrw::Error::AssertFail {
+                pos,
+                message: format!(
+                    "expected FieldRef at constant pool index {}. Instead found {:?}.",
+                    index, x
+                ),
+            }),
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct BytePad;
+
+impl BinRead for BytePad {
+    type Args<'a> = ();
+
+    fn read_options<R: std::io::prelude::Read + std::io::prelude::Seek>(
+        reader: &mut R,
+        endian: binrw::Endian,
+        args: Self::Args<'_>,
+    ) -> binrw::prelude::BinResult<Self> {
+        let pos = reader.stream_position()?;
+        let d4 = pos % 4;
+        if d4 == 0 {
+            return Ok(Self)
+        }
+        let skip = 4 - d4;
+        reader.seek(std::io::SeekFrom::Current(skip as i64))?;
+        Ok(Self)
+    }
+}
 
 #[binread]
-pub enum Instruction {
+#[br(import(cf: &'a ClassFile,))]
+#[derive(Debug)]
+pub enum Instruction<'a> {
     #[br(magic = 0x32u8)]
     Aaload,
     #[br(magic = 0x53u8)]
@@ -9,401 +99,525 @@ pub enum Instruction {
     #[br(magic = 0x1u8)]
     AconstNull,
     #[br(magic = 0x19u8)]
-    Aload,
+    Aload { index: u8 },
     #[br(magic = 0x2au8)]
     Aload0,
     #[br(magic = 0x2bu8)]
-    aload_1,
+    Aload1,
     #[br(magic = 0x2cu8)]
-    aload_2,
+    Aload2,
     #[br(magic = 0x2du8)]
-    aload_3,
+    Aload3,
     #[br(magic = 0xbdu8)]
-    anewarray,
+    Anewarray {
+        #[br(try_map = |x: ClassIndex| x.get_as_string(cf))]
+        class: &'a str,
+    },
     #[br(magic = 0xb0u8)]
-    areturn,
+    Areturn,
     #[br(magic = 0xbeu8)]
-    arraylength,
+    Arraylength,
     #[br(magic = 0x3au8)]
-    astore,
+    Astore { index: u8 },
     #[br(magic = 0x4bu8)]
-    astore_0,
+    Astore0,
     #[br(magic = 0x4cu8)]
-    astore_1,
+    Astore1,
     #[br(magic = 0x4du8)]
-    astore_2,
+    Astore2,
     #[br(magic = 0x4eu8)]
-    astore_3,
+    Astore3,
     #[br(magic = 0xbfu8)]
-    athrow,
+    Athrow,
     #[br(magic = 0x33u8)]
-    baload,
+    Baload,
     #[br(magic = 0x54u8)]
-    bastore,
+    Bastore,
     #[br(magic = 0x10u8)]
-    bipush,
+    Bipush { byte: i8 },
     #[br(magic = 0x34u8)]
-    caload,
+    Caload,
     #[br(magic = 0x55u8)]
-    castore,
+    Castore,
     #[br(magic = 0xc0u8)]
-    checkcast,
+    Checkcast {
+        #[br(try_map = |x: ClassIndex| x.get_as_string(cf))]
+        class: &'a str,
+    },
     #[br(magic = 0x90u8)]
-    d2f,
+    D2f,
     #[br(magic = 0x8eu8)]
-    d2i,
+    D2i,
     #[br(magic = 0x8fu8)]
-    d2l,
+    D2l,
     #[br(magic = 0x63u8)]
-    dadd,
+    Dadd,
     #[br(magic = 0x31u8)]
-    daload,
+    Daload,
     #[br(magic = 0x52u8)]
-    dastore,
+    Dastore,
     #[br(magic = 0x98u8)]
-    dcmpg,
+    Dcmpg,
     #[br(magic = 0x97u8)]
-    dcmpl,
+    Dcmpl,
     #[br(magic = 0xeu8)]
-    dconst_0,
+    Dconst0,
     #[br(magic = 0xfu8)]
-    dconst_1,
+    Dconst1,
     #[br(magic = 0x6fu8)]
-    ddiv,
+    Ddiv,
     #[br(magic = 0x18u8)]
-    dload,
+    Dload { index: u8 },
     #[br(magic = 0x26u8)]
-    dload_0,
+    Dload0,
     #[br(magic = 0x27u8)]
-    dload_1,
+    Dload1,
     #[br(magic = 0x28u8)]
-    dload_2,
+    Dload2,
     #[br(magic = 0x29u8)]
-    dload_3,
+    Dload3,
     #[br(magic = 0x6bu8)]
-    dmul,
+    Dmul,
     #[br(magic = 0x77u8)]
-    dneg,
+    Dneg,
     #[br(magic = 0x73u8)]
-    drem,
+    Drem,
     #[br(magic = 0xafu8)]
-    dreturn,
+    Dreturn,
     #[br(magic = 0x39u8)]
-    dstore,
+    Dstore { index: u8 },
     #[br(magic = 0x47u8)]
-    dstore_0,
+    Dstore0,
     #[br(magic = 0x48u8)]
-    dstore_1,
+    Dstore1,
     #[br(magic = 0x49u8)]
-    dstore_2,
+    Dstore2,
     #[br(magic = 0x4au8)]
-    dstore_3,
+    Dstore3,
     #[br(magic = 0x67u8)]
-    dsub,
+    Dsub,
     #[br(magic = 0x59u8)]
-    dup,
+    Dup,
     #[br(magic = 0x5au8)]
-    dup_x1,
+    DupX1,
     #[br(magic = 0x5bu8)]
-    dup_x2,
+    DupX2,
     #[br(magic = 0x5cu8)]
-    dup2,
+    Dup2,
     #[br(magic = 0x5du8)]
-    dup2_x1,
+    Dup2X1,
     #[br(magic = 0x5eu8)]
-    dup2_x2,
+    Dup2X2,
     #[br(magic = 0x8du8)]
-    f2d,
+    F2d,
     #[br(magic = 0x8bu8)]
-    f2i,
+    F2i,
     #[br(magic = 0x8cu8)]
-    f2l,
+    F2l,
     #[br(magic = 0x62u8)]
-    fadd,
+    Fadd,
     #[br(magic = 0x30u8)]
-    faload,
+    Faload,
     #[br(magic = 0x51u8)]
-    fastore,
+    Fastore,
     #[br(magic = 0x96u8)]
-    fcmpg,
+    Fcmpg,
     #[br(magic = 0x95u8)]
-    fcmpl,
+    Fcmpl,
     #[br(magic = 0xbu8)]
-    fconst_0,
+    Fconst0,
     #[br(magic = 0xcu8)]
-    fconst_1,
+    Fconst1,
     #[br(magic = 0xdu8)]
-    fconst_2,
+    Fconst2,
     #[br(magic = 0x6eu8)]
-    fdiv,
+    Fdiv,
     #[br(magic = 0x17u8)]
-    fload,
+    Fload { index: u8 },
     #[br(magic = 0x22u8)]
-    fload_0,
+    Fload0,
     #[br(magic = 0x23u8)]
-    fload_1,
+    Fload1,
     #[br(magic = 0x24u8)]
-    fload_2,
+    Fload2,
     #[br(magic = 0x25u8)]
-    fload_3,
+    Fload3,
     #[br(magic = 0x6au8)]
-    fmul,
+    Fmul,
     #[br(magic = 0x76u8)]
-    fneg,
+    Fneg,
     #[br(magic = 0x72u8)]
-    frem,
+    Frem,
     #[br(magic = 0xaeu8)]
-    freturn,
+    Freturn,
     #[br(magic = 0x38u8)]
-    fstore,
+    Fstore { index: u8 },
     #[br(magic = 0x43u8)]
-    fstore_0,
+    Fstore0,
     #[br(magic = 0x44u8)]
-    fstore_1,
+    Fstore1,
     #[br(magic = 0x45u8)]
-    fstore_2,
+    Fstore2,
     #[br(magic = 0x46u8)]
-    fstore_3,
+    Fstore3,
     #[br(magic = 0x66u8)]
-    fsub,
+    Fsub,
     #[br(magic = 0xb4u8)]
-    getfield,
+    Getfield {
+        #[br(args(cf,))]
+        field: FieldRef<'a>,
+    },
     #[br(magic = 0xb2u8)]
-    getstatic,
+    Getstatic {
+        #[br(args(cf,))]
+        field: FieldRef<'a>,
+    },
     #[br(magic = 0xa7u8)]
-    goto,
+    Goto {
+        offset: i16,
+    },
     #[br(magic = 0xc8u8)]
-    goto_w,
+    GotoW {
+        offset: i32,
+    },
     #[br(magic = 0x91u8)]
-    i2b,
+    I2b,
     #[br(magic = 0x92u8)]
-    i2c,
+    I2c,
     #[br(magic = 0x87u8)]
-    i2d,
+    I2d,
     #[br(magic = 0x86u8)]
-    i2f,
+    I2f,
     #[br(magic = 0x85u8)]
-    i2l,
+    I2l,
     #[br(magic = 0x93u8)]
-    i2s,
+    I2s,
     #[br(magic = 0x60u8)]
-    iadd,
+    Iadd,
     #[br(magic = 0x2eu8)]
-    iaload,
+    Iaload,
     #[br(magic = 0x7eu8)]
-    iand,
+    Iand,
     #[br(magic = 0x4fu8)]
-    iastore,
+    Iastore,
     #[br(magic = 0x2u8)]
-    iconst_m1,
+    IconstM1,
     #[br(magic = 0x3u8)]
-    iconst_0,
+    Iconst0,
     #[br(magic = 0x4u8)]
-    iconst_1,
+    Iconst1,
     #[br(magic = 0x5u8)]
-    iconst_2,
+    Iconst2,
     #[br(magic = 0x6u8)]
-    iconst_3,
+    Iconst3,
     #[br(magic = 0x7u8)]
-    iconst_4,
+    Iconst4,
     #[br(magic = 0x8u8)]
-    iconst_5,
+    Iconst5,
     #[br(magic = 0x6cu8)]
-    idiv,
+    Idiv,
     #[br(magic = 0xa5u8)]
-    if_acmpeq,
+    IfAcmpeq {
+        offset: i16,
+    },
     #[br(magic = 0xa6u8)]
-    if_acmpne,
+    IfAcmpne {
+        offset: i16,
+    },
     #[br(magic = 0x9fu8)]
-    if_icmpeq,
+    IfIcmpeq {
+        offset: i16,
+    },
     #[br(magic = 0xa0u8)]
-    if_icmpne,
+    IfIcmpne {
+        offset: i16,
+    },
     #[br(magic = 0xa1u8)]
-    if_icmplt,
+    IfIcmplt {
+        offset: i16,
+    },
     #[br(magic = 0xa2u8)]
-    if_icmpge,
+    IfIcmpge {
+        offset: i16,
+    },
     #[br(magic = 0xa3u8)]
-    if_icmpgt,
+    IfIcmpgt {
+        offset: i16,
+    },
     #[br(magic = 0xa4u8)]
-    if_icmple,
+    IfIcmple {
+        offset: i16,
+    },
     #[br(magic = 0x99u8)]
-    ifeq,
+    Ifeq {
+        offset: i16,
+    },
     #[br(magic = 0x9au8)]
-    ifne,
+    Ifne {
+        offset: i16,
+    },
     #[br(magic = 0x9bu8)]
-    iflt,
+    Iflt {
+        offset: i16,
+    },
     #[br(magic = 0x9cu8)]
-    ifge,
+    Ifge {
+        offset: i16,
+    },
     #[br(magic = 0x9du8)]
-    ifgt,
+    Ifgt {
+        offset: i16,
+    },
     #[br(magic = 0x9eu8)]
-    ifle,
+    Ifle {
+        offset: i16,
+    },
     #[br(magic = 0xc7u8)]
-    ifnonnull,
+    Ifnonnull {
+        offset: i16,
+    },
     #[br(magic = 0xc6u8)]
-    ifnull,
+    Ifnull {
+        offset: i16,
+    },
     #[br(magic = 0x84u8)]
-    iinc,
+    Iinc {
+        index: u8,
+        constant: i8,
+    },
     #[br(magic = 0x15u8)]
-    iload,
+    Iload {
+        index: u8,
+    },
     #[br(magic = 0x1au8)]
-    iload_0,
+    Iload0,
     #[br(magic = 0x1bu8)]
-    iload_1,
+    Iload1,
     #[br(magic = 0x1cu8)]
-    iload_2,
+    Iload2,
     #[br(magic = 0x1du8)]
-    iload_3,
+    Iload3,
     #[br(magic = 0x68u8)]
-    imul,
+    Imul,
     #[br(magic = 0x74u8)]
-    ineg,
+    Ineg,
     #[br(magic = 0xc1u8)]
-    instanceof,
+    Instanceof {
+        #[br(try_map = |x: ClassIndex| x.get_as_string(cf))]
+        class: &'a str,
+    },
     #[br(magic = 0xbau8)]
-    invokedynamic,
+    Invokedynamic {
+        index: u16,
+        _never_used: u16, // IDK why, but the spec says this is followed by two 0x00 bytes.
+    },
     #[br(magic = 0xb9u8)]
-    invokeinterface,
+    Invokeinterface {
+        index: u16,
+        count: u8,
+        _never_used: u16, // IDK why, but the spec says this is followed by one 0x00 byte.
+    },
     #[br(magic = 0xb7u8)]
-    invokespecial,
+    Invokespecial {
+        index: u16,
+    },
     #[br(magic = 0xb8u8)]
-    invokestatic,
+    Invokestatic {
+        index: u16,
+    },
     #[br(magic = 0xb6u8)]
-    invokevirtual,
+    Invokevirtual {
+        index: u16,
+    },
     #[br(magic = 0x80u8)]
-    ior,
+    Ior,
     #[br(magic = 0x70u8)]
-    irem,
+    Irem,
     #[br(magic = 0xacu8)]
-    ireturn,
+    Ireturn,
     #[br(magic = 0x78u8)]
-    ishl,
+    Ishl,
     #[br(magic = 0x7au8)]
-    ishr,
+    Ishr,
     #[br(magic = 0x36u8)]
-    istore,
+    Istore {
+        index: u8,
+    },
     #[br(magic = 0x3bu8)]
-    istore_0,
+    Istore0,
     #[br(magic = 0x3cu8)]
-    istore_1,
+    Istore1,
     #[br(magic = 0x3du8)]
-    istore_2,
+    Istore2,
     #[br(magic = 0x3eu8)]
-    istore_3,
+    Istore3,
     #[br(magic = 0x64u8)]
-    isub,
+    Isub,
     #[br(magic = 0x7cu8)]
-    iushr,
+    Iushr,
     #[br(magic = 0x82u8)]
-    ixor,
+    Ixor,
     #[br(magic = 0xa8u8)]
-    jsr,
+    Jsr {
+        offset: i16,
+    },
     #[br(magic = 0xc9u8)]
-    jsr_w,
+    JsrW {
+        offset: i32,
+    },
     #[br(magic = 0x8au8)]
-    l2d,
+    L2d,
     #[br(magic = 0x89u8)]
-    l2f,
+    L2f,
     #[br(magic = 0x88u8)]
-    l2i,
+    L2i,
     #[br(magic = 0x61u8)]
-    ladd,
+    Ladd,
     #[br(magic = 0x2fu8)]
-    laload,
+    Laload,
     #[br(magic = 0x7fu8)]
-    land,
+    Land,
     #[br(magic = 0x50u8)]
-    lastore,
+    Lastore,
     #[br(magic = 0x94u8)]
-    lcmp,
+    Lcmp,
     #[br(magic = 0x9u8)]
-    lconst_0,
+    Lconst0,
     #[br(magic = 0xau8)]
-    lconst_1,
+    Lconst1,
     #[br(magic = 0x12u8)]
-    ldc,
+    Ldc {
+        index: u8,
+    },
     #[br(magic = 0x13u8)]
-    ldc_w,
+    LdcW {
+        index: u16,
+    },
     #[br(magic = 0x14u8)]
-    ldc2_w,
+    Ldc2W {
+        index: u16,
+    },
     #[br(magic = 0x6du8)]
-    ldiv,
+    Ldiv,
     #[br(magic = 0x16u8)]
-    lload,
+    Lload {
+        index: u8,
+    },
     #[br(magic = 0x1eu8)]
-    lload_0,
+    Lload0,
     #[br(magic = 0x1fu8)]
-    lload_1,
+    Lload1,
     #[br(magic = 0x20u8)]
-    lload_2,
+    Lload2,
     #[br(magic = 0x21u8)]
-    lload_3,
+    Lload3,
     #[br(magic = 0x69u8)]
-    lmul,
+    Lmul,
     #[br(magic = 0x75u8)]
-    lneg,
+    Lneg,
     #[br(magic = 0xabu8)]
-    lookupswitch,
+    Lookupswitch {
+        _padding: BytePad,
+        default: i32,
+        #[br(temp)]
+        npairs: u32,
+        #[br(count = npairs)]
+        pairs: Vec<(i32, i32)>,
+    },
     #[br(magic = 0x81u8)]
-    lor,
+    Lor,
     #[br(magic = 0x71u8)]
-    lrem,
+    Lrem,
     #[br(magic = 0xadu8)]
-    lreturn,
+    Lreturn,
     #[br(magic = 0x79u8)]
-    lshl,
+    Lshl,
     #[br(magic = 0x7bu8)]
-    lshr,
+    Lshr,
     #[br(magic = 0x37u8)]
-    lstore,
+    Lstore {
+        index: u8,
+    },
     #[br(magic = 0x3fu8)]
-    lstore_0,
+    Lstore0,
     #[br(magic = 0x40u8)]
-    lstore_1,
+    Lstore1,
     #[br(magic = 0x41u8)]
-    lstore_2,
+    Lstore2,
     #[br(magic = 0x42u8)]
-    lstore_3,
+    Lstore3,
     #[br(magic = 0x65u8)]
-    lsub,
+    Lsub,
     #[br(magic = 0x7du8)]
-    lushr,
+    Lushr,
     #[br(magic = 0x83u8)]
-    lxor,
+    Lxor,
     #[br(magic = 0xc2u8)]
-    monitorenter,
+    Monitorenter,
     #[br(magic = 0xc3u8)]
-    monitorexit,
+    Monitorexit,
     #[br(magic = 0xc5u8)]
-    multianewarray,
+    Multianewarray {
+        #[br(try_map = |x: ClassIndex| x.get_as_string(cf))]
+        class: &'a str,
+        dimensions: u8,
+    },
     #[br(magic = 0xbbu8)]
-    new,
+    New {
+        #[br(try_map = |x: ClassIndex| x.get_as_string(cf))]
+        class: &'a str,
+    },
     #[br(magic = 0xbcu8)]
-    newarray,
+    Newarray {
+        atype: u8,
+    },
     #[br(magic = 0x0u8)]
-    nop,
+    Nop,
     #[br(magic = 0x57u8)]
-    pop,
+    Pop,
     #[br(magic = 0x58u8)]
-    pop2,
+    Pop2,
     #[br(magic = 0xb5u8)]
-    putfield,
+    Putfield {
+        #[br(args(cf,))]
+        field: FieldRef<'a>
+    },
     #[br(magic = 0xb3u8)]
-    putstatic,
+    Putstatic {
+        #[br(args(cf,))]
+        field: FieldRef<'a>
+    },
     #[br(magic = 0xa9u8)]
-    ret,
+    Ret {
+        index: u8,
+    },
     #[br(magic = 0xb1u8)]
     Return,
     #[br(magic = 0x35u8)]
-    saload,
+    Saload,
     #[br(magic = 0x56u8)]
-    sastore,
+    Sastore,
     #[br(magic = 0x11u8)]
-    sipush,
+    Sipush {
+        #[br(map = |x: u16| x as i32)]
+        value: i32
+    },
     #[br(magic = 0x5fu8)]
-    swap,
+    Swap,
     #[br(magic = 0xaau8)]
-    tableswitch,
+    Tableswitch {
+        _padding: BytePad,
+        default: i32,
+        low: i32,
+        high: i32,
+        #[br(count = high - low + 1)]
+        jump_offsets: Vec<i32>,
+    },
     #[br(magic = 0xc4u8)]
-    wide,
+    Wide {
+        opcode: u8,
+        index: u16,
+        #[br(if(opcode == 0x84u8))]
+        constant: u16,
+    },
 }
