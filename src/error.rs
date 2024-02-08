@@ -1,6 +1,6 @@
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
-    #[error("Invalid Constant Pool")]
+    #[error("Invalid Constant Pool {0}")]
     ConstantPoolError(String),
     #[error("Binary Parsing Error")]
     BinrwError(#[from] binrw::Error),
@@ -8,6 +8,10 @@ pub enum Error {
     NomError(nom::Err<nom::error::Error<String>>),
     #[error("IO Error")]
     IoError(#[from] std::io::Error),
+    #[error("InvokeDynamic instruction found without a class BootstrapMethods attribute")]
+    NoBootstrapMethods,
+    #[error("Invalid bootstrap method index `{0}`.")]
+    InvalidBootstrapIndex(u16), 
 }
 
 impl<'a> From<nom::Err<nom::error::Error<&'a str>>> for Error {

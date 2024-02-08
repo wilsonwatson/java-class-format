@@ -3,7 +3,7 @@ use std::fmt::Debug;
 use binrw::{binread, BinRead, VecArgs};
 
 use crate::{
-    instruction::Instruction, raw::{Attributes, ClassIndex, ConstantPoolItem, MethodHandleIndex, NameAndTypeIndex, Utf8Index}, ClassFile, Error
+    instruction::{Instruction, MethodHandle}, raw::{Attributes, ClassIndex, ConstantPoolItem, MethodHandleIndex, NameAndTypeIndex, Utf8Index}, ClassFile, Error
 };
 
 pub struct ConstantValue<'a> {
@@ -144,7 +144,7 @@ impl<'a> Code<'a> {
         let mut cursor = std::io::Cursor::new(&self.code[..]);
         let mut res = Vec::new();
         loop {
-            let p = cursor.position();
+            let _p = cursor.position();
             if cursor.position() >= self.code.len() as u64 {
                 break
             }
@@ -567,6 +567,12 @@ struct BootstrapMethodRaw {
     bootstrap_args: Vec<u16>,
 }
 
+#[derive(Debug)]
+pub struct BootstrapMethod<'a> {
+    pub method: MethodHandle<'a>,
+    // TODO arguments
+}
+
 #[binread]
 #[br(import(cf: &'a ClassFile,))]
 pub struct BootstrapMethods<'a> {
@@ -576,6 +582,17 @@ pub struct BootstrapMethods<'a> {
     bootstrap_methods_length: u16,
     #[br(count = bootstrap_methods_length)]
     bootstrap_methods: Vec<BootstrapMethodRaw>,
+}
+
+impl<'a> BootstrapMethods<'a> {
+    pub fn get(&self, idx: u16) -> super::Result<Option<BootstrapMethod<'a>>> {
+        if let Some(method) = self.bootstrap_methods.get(idx as usize) {
+            let method = MethodHandle::from_u16(method.bootstrap_method_ref.0, self.class_file)?;
+            Ok(Some(BootstrapMethod { method }))
+        } else {
+            Ok(None)
+        }
+    }
 }
 
 // TODO MethodParameters

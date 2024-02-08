@@ -169,6 +169,7 @@ index_ty!(Utf8 { cpool, value } => { value.as_str() });
 index_ty!(Class { cpool, name_index } => { name_index.get_as_string_impl(cpool)? });
 index_ty!(NameAndType { cpool, name_index, descriptor_index } => { name_index.get_as_string_impl(cpool)? });
 index_ty!(MethodHandle { cpool, reference } => { "" });
+index_ty!(InvokeDynamic { cpool, bootstrap_method_attr_index, name_and_type_index } => { "" });
 
 impl NameAndTypeIndex {
     pub fn get_name<'a>(&self, class: &'a super::ClassFile) -> super::Result<&'a str> {
@@ -190,9 +191,13 @@ impl NameAndTypeIndex {
     }
 }
 
+impl InvokeDynamicIndex {
+    
+}
+
 #[binread]
 #[derive(Debug)]
-pub struct BootstrapMethodAttrInfo(u16);
+pub struct BootstrapMethodAttrInfo(pub(crate) u16);
 
 #[binread]
 #[derive(Debug)]

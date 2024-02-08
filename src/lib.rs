@@ -1,6 +1,6 @@
 use std::fmt::Debug;
 
-use attributes::{EnclosingMethod, InnerClasses, Signature, SourceFile};
+use attributes::{BootstrapMethods, EnclosingMethod, InnerClasses, Signature, SourceFile};
 use binrw::{binread, BinRead};
 
 pub mod error;
@@ -104,6 +104,7 @@ impl ClassFile {
     attribute!(InnerClasses, inner_classes);
     attribute!(EnclosingMethod, enclosing_method);
     attribute!(SourceFile, source_file);
+    attribute!(BootstrapMethods, bootstrap_methods);
 
     pub fn signature<'a>(&'a self) -> crate::Result<Option<ClassSignature<'a>>> {
         match self.attributes.0.get("Signature") {

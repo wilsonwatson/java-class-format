@@ -1,70 +1,223 @@
 use binrw::{binread, BinRead};
 
-use crate::{field::{Field, TypeDescriptor}, raw::ConstantPoolItem, ClassFile, ClassIndex};
+use crate::{
+    attributes::BootstrapMethod, field::TypeDescriptor, method::MethodDescriptor, raw::ConstantPoolItem, ClassFile, ClassIndex
+};
 
 #[derive(Debug)]
 pub struct FieldRef<'a> {
-    class: &'a str,
-    name: &'a str,
-    descriptor: TypeDescriptor<'a>,
+    pub class: &'a str,
+    pub name: &'a str,
+    pub descriptor: TypeDescriptor<'a>,
 }
 
-impl<'a> BinRead for FieldRef<'a> {
-    type Args<'b> = (&'a ClassFile,);
+#[derive(Debug)]
+pub struct MethodRef<'a> {
+    pub class: &'a str,
+    pub name: &'a str,
+    pub descriptor: MethodDescriptor<'a>,
+}
 
-    fn read_options<R: std::io::prelude::Read + std::io::prelude::Seek>(
-        reader: &mut R,
-        endian: binrw::Endian,
-        (cf,): Self::Args<'_>,
-    ) -> binrw::prelude::BinResult<Self> {
-        let pos = reader.stream_position()?;
-        let index = u16::read_options(reader, endian, ())?;
+#[derive(Debug)]
+pub struct InterfaceMethodRef<'a> {
+    pub class: &'a str,
+    pub name: &'a str,
+    pub descriptor: MethodDescriptor<'a>,
+}
+
+impl<'a> FieldRef<'a> {
+    fn from_u16(index: u16, cf: &'a ClassFile) -> super::Result<Self> {
         match &cf.constant_pool.0[index as usize - 1] {
             ConstantPoolItem::Fieldref {
                 class_index,
                 name_and_type_index,
             } => {
-                let class = class_index
-                    .get_as_string(cf)
-                    .map_err(|x| binrw::Error::Custom {
-                        pos,
-                        err: Box::new(x),
-                    })?;
-                let name = name_and_type_index
-                    .get_name(cf)
-                    .map_err(|x| binrw::Error::Custom {
-                        pos,
-                        err: Box::new(x),
-                    })?;
-                let descriptor =
-                    name_and_type_index
-                        .get_descriptor(cf)
-                        .map_err(|x| binrw::Error::Custom {
-                            pos,
-                            err: Box::new(x),
-                        })?;
-                let descriptor = TypeDescriptor::parse(descriptor)
-                    .map_err(|x| binrw::Error::Custom {
-                        pos,
-                        err: Box::new(super::Error::from(x)),
-                    })?
-                    .1;
+                let class = class_index.get_as_string(cf)?;
+                let name = name_and_type_index.get_name(cf)?;
+                let descriptor = name_and_type_index.get_descriptor(cf)?;
+                let descriptor = TypeDescriptor::parse(descriptor)?.1;
                 Ok(Self {
                     class,
                     name,
                     descriptor,
                 })
             }
-            x => Err(binrw::Error::AssertFail {
-                pos,
-                message: format!(
-                    "expected FieldRef at constant pool index {}. Instead found {:?}.",
-                    index, x
-                ),
-            }),
+            x => Err(super::Error::ConstantPoolError(format!(
+                "expected FieldRef at constant pool index {}. Instead found {:?}.",
+                index, x
+            ))),
         }
     }
 }
+
+impl<'a> MethodRef<'a> {
+    fn from_u16(index: u16, cf: &'a ClassFile) -> super::Result<Self> {
+        match &cf.constant_pool.0[index as usize - 1] {
+            ConstantPoolItem::Methodref {
+                class_index,
+                name_and_type_index,
+            } => {
+                let class = class_index.get_as_string(cf)?;
+                let name = name_and_type_index.get_name(cf)?;
+                let descriptor = name_and_type_index.get_descriptor(cf)?;
+                let descriptor = MethodDescriptor::parse(descriptor)?.1;
+                Ok(Self {
+                    class,
+                    name,
+                    descriptor,
+                })
+            }
+            x => Err(super::Error::ConstantPoolError(format!(
+                "expected MethodRef at constant pool index {}. Instead found {:?}.",
+                index, x
+            ))),
+        }
+    }
+}
+
+impl<'a> InterfaceMethodRef<'a> {
+    fn from_u16(index: u16, cf: &'a ClassFile) -> super::Result<Self> {
+        match &cf.constant_pool.0[index as usize - 1] {
+            ConstantPoolItem::InterfaceMethodref {
+                class_index,
+                name_and_type_index,
+            } => {
+                let class = class_index.get_as_string(cf)?;
+                let name = name_and_type_index.get_name(cf)?;
+                let descriptor = name_and_type_index.get_descriptor(cf)?;
+                let descriptor = MethodDescriptor::parse(descriptor)?.1;
+                Ok(Self {
+                    class,
+                    name,
+                    descriptor,
+                })
+            }
+            x => Err(super::Error::ConstantPoolError(format!(
+                "expected InterfaceMethodRef at constant pool index {}. Instead found {:?}.",
+                index, x
+            ))),
+        }
+    }
+}
+
+macro_rules! from_u16_binread {
+    ($class:ident) => {
+        impl<'a> BinRead for $class<'a> {
+            type Args<'b> = (&'a ClassFile,);
+
+            fn read_options<R: std::io::prelude::Read + std::io::prelude::Seek>(
+                reader: &mut R,
+                endian: binrw::Endian,
+                (cf,): Self::Args<'_>,
+            ) -> binrw::prelude::BinResult<Self> {
+                let pos = reader.stream_position()?;
+                let index = u16::read_options(reader, endian, ())?;
+                Self::from_u16(index, cf).map_err(|x| binrw::Error::Custom {
+                    pos,
+                    err: Box::new(x),
+                })
+            }
+        }
+    };
+}
+
+#[derive(Debug)]
+pub enum MaybeInterfaceMethodRef<'a> {
+    RegularMethod(MethodRef<'a>),
+    InterfaceMethod(InterfaceMethodRef<'a>),
+}
+
+impl<'a> MaybeInterfaceMethodRef<'a> {
+    fn from_u16(index: u16, cf: &'a ClassFile) -> super::Result<Self> {
+        match &cf.constant_pool.0[index as usize - 1] {
+            ConstantPoolItem::InterfaceMethodref { .. } => {
+                Ok(Self::InterfaceMethod(InterfaceMethodRef::from_u16(index, cf)?))
+            }
+            ConstantPoolItem::Methodref { .. } => {
+                Ok(Self::RegularMethod(MethodRef::from_u16(index, cf)?))
+            }
+            x => Err(super::Error::ConstantPoolError(format!(
+                "expected MethodRef or InterfaceMethodRef at constant pool index {}. Instead found {:?}.",
+                index, x
+            ))),
+        }
+    }
+}
+
+#[derive(Debug)]
+pub enum MethodHandle<'a> {
+    GetField(FieldRef<'a>),
+    GetStatic(FieldRef<'a>),
+    PutField(FieldRef<'a>),
+    PutStatic(FieldRef<'a>),
+    InvokeVirtual(MethodRef<'a>),
+    NewInvokeSpecial(MethodRef<'a>),
+    InvokeStatic(MaybeInterfaceMethodRef<'a>),
+    InvokeSpecial(MaybeInterfaceMethodRef<'a>),
+    InvokeInterface(InterfaceMethodRef<'a>),
+}
+
+impl<'a> MethodHandle<'a> {
+    pub(crate) fn from_u16(index: u16, cf: &'a ClassFile) -> super::Result<Self> {
+        match &cf.constant_pool.0[index as usize - 1] {
+            ConstantPoolItem::MethodHandle { reference } => {
+                match reference.kind {
+                    1 => Ok(Self::GetField(FieldRef::from_u16(reference.index, cf)?)),
+                    2 => Ok(Self::GetStatic(FieldRef::from_u16(reference.index, cf)?)),
+                    3 => Ok(Self::PutField(FieldRef::from_u16(reference.index, cf)?)),
+                    4 => Ok(Self::PutStatic(FieldRef::from_u16(reference.index, cf)?)),
+                    5 => Ok(Self::InvokeVirtual(MethodRef::from_u16(reference.index, cf)?)),
+                    8 => Ok(Self::NewInvokeSpecial(MethodRef::from_u16(reference.index, cf)?)),
+                    6 => Ok(Self::InvokeStatic(MaybeInterfaceMethodRef::from_u16(reference.index, cf)?)),
+                    7 => Ok(Self::InvokeSpecial(MaybeInterfaceMethodRef::from_u16(reference.index, cf)?)),
+                    9 => Ok(Self::InvokeInterface(InterfaceMethodRef::from_u16(reference.index, cf)?)),
+                    x => Err(super::Error::ConstantPoolError(format!("invalid reference_kind {}.", x)))
+                }
+            }
+            x => Err(super::Error::ConstantPoolError(format!(
+                "expected MethodRef or InterfaceMethodRef at constant pool index {}. Instead found {:?}.",
+                index, x
+            ))),
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct DynamicInfo<'a> {
+    pub bootstrap_method: BootstrapMethod<'a>,
+    pub name: &'a str,
+    pub descriptor: MethodDescriptor<'a>,
+}
+
+impl<'a> DynamicInfo<'a> {
+    fn from_u16(index: u16, cf: &'a ClassFile) -> super::Result<Self> {
+        match &cf.constant_pool.0[index as usize - 1] {
+            ConstantPoolItem::InvokeDynamic {
+                bootstrap_method_attr_index,
+                name_and_type_index,
+            } => {
+                let bootstrap_methods = cf.bootstrap_methods()?.ok_or_else(|| super::Error::NoBootstrapMethods)?;
+                let bootstrap_method = bootstrap_methods.get(bootstrap_method_attr_index.0)?.ok_or_else(|| super::Error::InvalidBootstrapIndex(bootstrap_method_attr_index.0))?;
+
+                let name = name_and_type_index.get_name(cf)?;
+                let descriptor =
+                    MethodDescriptor::parse(name_and_type_index.get_descriptor(cf)?)?.1;
+                Ok(Self { bootstrap_method, name, descriptor })
+            }
+            x => Err(super::Error::ConstantPoolError(format!(
+                "expected InvokeDynamic at constant pool index {}. Instead found {:?}.",
+                index, x
+            ))),
+        }
+    }
+}
+
+from_u16_binread!(FieldRef);
+from_u16_binread!(MethodRef);
+from_u16_binread!(InterfaceMethodRef);
+from_u16_binread!(MaybeInterfaceMethodRef);
+from_u16_binread!(MethodHandle);
+from_u16_binread!(DynamicInfo);
 
 #[derive(Debug)]
 pub struct BytePad;
@@ -74,13 +227,13 @@ impl BinRead for BytePad {
 
     fn read_options<R: std::io::prelude::Read + std::io::prelude::Seek>(
         reader: &mut R,
-        endian: binrw::Endian,
-        args: Self::Args<'_>,
+        _endian: binrw::Endian,
+        _args: Self::Args<'_>,
     ) -> binrw::prelude::BinResult<Self> {
         let pos = reader.stream_position()?;
         let d4 = pos % 4;
         if d4 == 0 {
-            return Ok(Self)
+            return Ok(Self);
         }
         let skip = 4 - d4;
         reader.seek(std::io::SeekFrom::Current(skip as i64))?;
@@ -273,13 +426,9 @@ pub enum Instruction<'a> {
         field: FieldRef<'a>,
     },
     #[br(magic = 0xa7u8)]
-    Goto {
-        offset: i16,
-    },
+    Goto { offset: i16 },
     #[br(magic = 0xc8u8)]
-    GotoW {
-        offset: i32,
-    },
+    GotoW { offset: i32 },
     #[br(magic = 0x91u8)]
     I2b,
     #[br(magic = 0x92u8)]
@@ -317,78 +466,41 @@ pub enum Instruction<'a> {
     #[br(magic = 0x6cu8)]
     Idiv,
     #[br(magic = 0xa5u8)]
-    IfAcmpeq {
-        offset: i16,
-    },
+    IfAcmpeq { offset: i16 },
     #[br(magic = 0xa6u8)]
-    IfAcmpne {
-        offset: i16,
-    },
+    IfAcmpne { offset: i16 },
     #[br(magic = 0x9fu8)]
-    IfIcmpeq {
-        offset: i16,
-    },
+    IfIcmpeq { offset: i16 },
     #[br(magic = 0xa0u8)]
-    IfIcmpne {
-        offset: i16,
-    },
+    IfIcmpne { offset: i16 },
     #[br(magic = 0xa1u8)]
-    IfIcmplt {
-        offset: i16,
-    },
+    IfIcmplt { offset: i16 },
     #[br(magic = 0xa2u8)]
-    IfIcmpge {
-        offset: i16,
-    },
+    IfIcmpge { offset: i16 },
     #[br(magic = 0xa3u8)]
-    IfIcmpgt {
-        offset: i16,
-    },
+    IfIcmpgt { offset: i16 },
     #[br(magic = 0xa4u8)]
-    IfIcmple {
-        offset: i16,
-    },
+    IfIcmple { offset: i16 },
     #[br(magic = 0x99u8)]
-    Ifeq {
-        offset: i16,
-    },
+    Ifeq { offset: i16 },
     #[br(magic = 0x9au8)]
-    Ifne {
-        offset: i16,
-    },
+    Ifne { offset: i16 },
     #[br(magic = 0x9bu8)]
-    Iflt {
-        offset: i16,
-    },
+    Iflt { offset: i16 },
     #[br(magic = 0x9cu8)]
-    Ifge {
-        offset: i16,
-    },
+    Ifge { offset: i16 },
     #[br(magic = 0x9du8)]
-    Ifgt {
-        offset: i16,
-    },
+    Ifgt { offset: i16 },
     #[br(magic = 0x9eu8)]
-    Ifle {
-        offset: i16,
-    },
+    Ifle { offset: i16 },
     #[br(magic = 0xc7u8)]
-    Ifnonnull {
-        offset: i16,
-    },
+    Ifnonnull { offset: i16 },
     #[br(magic = 0xc6u8)]
-    Ifnull {
-        offset: i16,
-    },
+    Ifnull { offset: i16 },
     #[br(magic = 0x84u8)]
-    Iinc {
-        index: u8,
-        constant: i8,
-    },
+    Iinc { index: u8, constant: i8 },
     #[br(magic = 0x15u8)]
-    Iload {
-        index: u8,
-    },
+    Iload { index: u8 },
     #[br(magic = 0x1au8)]
     Iload0,
     #[br(magic = 0x1bu8)]
@@ -408,26 +520,31 @@ pub enum Instruction<'a> {
     },
     #[br(magic = 0xbau8)]
     Invokedynamic {
-        index: u16,
+        #[br(args(cf,))]
+        index: DynamicInfo<'a>,
         _never_used: u16, // IDK why, but the spec says this is followed by two 0x00 bytes.
     },
     #[br(magic = 0xb9u8)]
     Invokeinterface {
-        index: u16,
+        #[br(args(cf,))]
+        index: InterfaceMethodRef<'a>,
         count: u8,
         _never_used: u16, // IDK why, but the spec says this is followed by one 0x00 byte.
     },
     #[br(magic = 0xb7u8)]
     Invokespecial {
-        index: u16,
+        #[br(args(cf,))]
+        index: MaybeInterfaceMethodRef<'a>,
     },
     #[br(magic = 0xb8u8)]
     Invokestatic {
-        index: u16,
+        #[br(args(cf,))]
+        index: MaybeInterfaceMethodRef<'a>,
     },
     #[br(magic = 0xb6u8)]
     Invokevirtual {
-        index: u16,
+        #[br(args(cf,))]
+        index: MethodRef<'a>,
     },
     #[br(magic = 0x80u8)]
     Ior,
@@ -440,9 +557,7 @@ pub enum Instruction<'a> {
     #[br(magic = 0x7au8)]
     Ishr,
     #[br(magic = 0x36u8)]
-    Istore {
-        index: u8,
-    },
+    Istore { index: u8 },
     #[br(magic = 0x3bu8)]
     Istore0,
     #[br(magic = 0x3cu8)]
@@ -458,13 +573,9 @@ pub enum Instruction<'a> {
     #[br(magic = 0x82u8)]
     Ixor,
     #[br(magic = 0xa8u8)]
-    Jsr {
-        offset: i16,
-    },
+    Jsr { offset: i16 },
     #[br(magic = 0xc9u8)]
-    JsrW {
-        offset: i32,
-    },
+    JsrW { offset: i32 },
     #[br(magic = 0x8au8)]
     L2d,
     #[br(magic = 0x89u8)]
@@ -486,23 +597,15 @@ pub enum Instruction<'a> {
     #[br(magic = 0xau8)]
     Lconst1,
     #[br(magic = 0x12u8)]
-    Ldc {
-        index: u8,
-    },
+    Ldc { index: u8 },
     #[br(magic = 0x13u8)]
-    LdcW {
-        index: u16,
-    },
+    LdcW { index: u16 },
     #[br(magic = 0x14u8)]
-    Ldc2W {
-        index: u16,
-    },
+    Ldc2W { index: u16 },
     #[br(magic = 0x6du8)]
     Ldiv,
     #[br(magic = 0x16u8)]
-    Lload {
-        index: u8,
-    },
+    Lload { index: u8 },
     #[br(magic = 0x1eu8)]
     Lload0,
     #[br(magic = 0x1fu8)]
@@ -535,9 +638,7 @@ pub enum Instruction<'a> {
     #[br(magic = 0x7bu8)]
     Lshr,
     #[br(magic = 0x37u8)]
-    Lstore {
-        index: u8,
-    },
+    Lstore { index: u8 },
     #[br(magic = 0x3fu8)]
     Lstore0,
     #[br(magic = 0x40u8)]
@@ -568,9 +669,7 @@ pub enum Instruction<'a> {
         class: &'a str,
     },
     #[br(magic = 0xbcu8)]
-    Newarray {
-        atype: u8,
-    },
+    Newarray { atype: u8 },
     #[br(magic = 0x0u8)]
     Nop,
     #[br(magic = 0x57u8)]
@@ -580,17 +679,15 @@ pub enum Instruction<'a> {
     #[br(magic = 0xb5u8)]
     Putfield {
         #[br(args(cf,))]
-        field: FieldRef<'a>
+        field: FieldRef<'a>,
     },
     #[br(magic = 0xb3u8)]
     Putstatic {
         #[br(args(cf,))]
-        field: FieldRef<'a>
+        field: FieldRef<'a>,
     },
     #[br(magic = 0xa9u8)]
-    Ret {
-        index: u8,
-    },
+    Ret { index: u8 },
     #[br(magic = 0xb1u8)]
     Return,
     #[br(magic = 0x35u8)]
@@ -600,7 +697,7 @@ pub enum Instruction<'a> {
     #[br(magic = 0x11u8)]
     Sipush {
         #[br(map = |x: u16| x as i32)]
-        value: i32
+        value: i32,
     },
     #[br(magic = 0x5fu8)]
     Swap,
